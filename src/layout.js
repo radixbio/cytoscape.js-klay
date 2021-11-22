@@ -75,22 +75,27 @@ const klayOverrides = {
   interactiveReferencePoint: 'CENTER', // Determines which point of a node is considered by interactive layout phases.
 };
 
-const getPos = function( ele ){
-  let parent = ele.parent();
-  let k = ele.scratch('klay');
-  let p = {
-    x: k.x,
-    y: k.y
-  };
+const getPos = function( options ){
+  return (ele => {
+    let parent = ele.parent();
+    let k = ele.scratch('klay');
+    let width = ele.layoutDimensions(options).w;
+    let height = ele.layoutDimensions(options).h;
+    let p = {
+      x: k.x + width / 2,
+      y: k.y + height / 2
+    };
 
-  while (parent.nonempty()) {
-    var kp = parent.scratch('klay');
-    p.x += kp.x;
-    p.y += kp.y;
-    parent = parent.parent();
-  }
+    while( parent.nonempty() ){
+      let kp = parent.scratch('klay');
 
-  return p;
+      p.x += kp.x;
+      p.y += kp.y;
+      parent = parent.parent();
+    }
+
+    return p;
+  });
 };
 
 const makeNode = function( node, options ){
@@ -238,7 +243,78 @@ Layout.prototype.run = function(){
 
   nodes.filter(function(n){
     return !n.isParent();
-  }).layoutPositions( layout, options, getPos );
+  }).layoutPositions( layout, options, getPos(options) );
+
+  //Now we try to fix the edges by adding bend points
+
+  function addBendPointsToEdge(klayEdge){
+    const sourceEle = nodes.getElementById(klayEdge.source);
+    const sourceDimensions = sourceEle.layoutDimensions(options);
+    const sourceDimensionsNoOptions = sourceEle.layoutDimensions();
+    const sourceDelta = {w: sourceDimensions.w - sourceDimensionsNoOptions.w, h: sourceDimensions.h - sourceDimensionsNoOptions.h}; // since text is horizontal
+    const sourceKlay = sourceEle.scratch('klay');
+    
+
+    
+    const targetEle = nodes.getElementById(klayEdge.target);
+    const targetDimensions = targetEle.layoutDimensions(options);
+    const targetDimensionsNoOptions = sourceEle.layoutDimensions();
+    const targetDelta = {w: targetDimensions.w - targetDimensionsNoOptions.w, h: targetDimensions.h - targetDimensionsNoOptions.h};
+    const targetKlay = targetEle.scratch('klay');
+
+    /* const source = {x: klayEdge.sourcePoint.x, y: klayEdge.sourcePoint.y};
+    source.x += sourceDimensions.w/2;
+    source.y += sourceDimensions.h/2;
+
+    const target = {x: klayEdge.targetPoint.x, y: klayEdge.targetPoint.y};
+    target.x += targetDimensions.w/2;
+    target.y += targetDimensions.h/2;
+    */
+    const source = sourceEle.position();
+    const target = targetEle.position();
+
+
+
+    //makes the 0 coordinate be the source
+
+    const zero = {x: sourceKlay.x + sourceDimensions.w/2 , y: sourceKlay.y + sourceDimensions.h/2  };
+    const one = {x: targetKlay.x + targetDimensions.w/2 , y: targetKlay.y + targetDimensions.h/2  };
+    
+    
+    //Returns projection and orthogonal component of the point
+    const vector = {x: target.x - source.x, y: target.y - source.y};
+    const vectorLength = (vector.x**2 + vector.y**2)**0.5;// - (sourceDimensions.w + targetDimensions.w)**2/4 ;
+    const versor = {x: vector.x/vectorLength, y: vector.y/vectorLength};
+    function project(point) {
+      const direct = (point.x * versor.x + point.y *versor.y) / vectorLength; //normalized to between 0 and 1 // required for cyto
+      const orthogonal = -(point.x*versor.y) + (point.y * versor.x); //this is just geometric algebra 2 component. using the fact that versor has length 1 //in real pixels
+      return {x: direct, y: orthogonal};
+    }
+
+    //{x: source.x, y: source.y};
+    
+    function centralize(point){
+      return {x: point.x - zero.x , y: point.y - zero.y};//{x: point.x - klayEdge.sourcePoint.x + sourceDimensions.w/2, y: point.y - klayEdge.sourcePoint.y};//klayEdge.sourcePoint.y};
+    }
+    
+    const klayBendPoints = klayEdge.bendPoints||[];
+    const bendPoints = [project({x: klayEdge.sourcePoint.x - zero.x, y: klayEdge.sourcePoint.y - zero.y })];
+
+    klayBendPoints.forEach(point => 
+      bendPoints.push(project(centralize(point))));
+
+    const lastPointNeg =  (project({x: one.x - klayEdge.targetPoint.x , y: one.y - klayEdge.targetPoint.y}));
+        bendPoints.push(project({x: klayEdge.targetPoint.x - zero.x , y: klayEdge.targetPoint.y - zero.y}));
+    //bendPoints.push({x: 1 - lastPointNeg.x, y: -lastPointNeg.y});
+    const id = klayEdge.id;
+    const edge = edges.getElementById(id);
+    edge.data('bendPoints', bendPoints);
+    edge.data('startPoint', {x: klayEdge.sourcePoint.x - zero.x, y: klayEdge.sourcePoint.y - zero.y });
+    const startOffset = {x: klayEdge.sourcePoint.x - zero.x, y: klayEdge.sourcePoint.y - zero.y };
+    edge.data('startAngle', Math.atan2(startOffset.x, -startOffset.y));
+  }
+  
+  graph.edges.forEach(edge => addBendPointsToEdge(edge) );
 
   return this;
 };
